@@ -481,6 +481,9 @@
   .activity-entry.record{
     background:color-mix(in srgb, var(--accent) 8%, var(--surface-alt));
   }
+  .activity-entry.clickable{ cursor:pointer; }
+  .activity-entry.clickable:active{ opacity:0.8; }
+  .activity-detail-hint{ color:var(--accent); font-weight:600; white-space:nowrap; }
   .activity-top{
     display:flex; align-items:flex-start; gap:10px;
   }
@@ -1220,6 +1223,41 @@
   .star-progress-text strong{ color:var(--accent-bright); font-weight:700; }
   .star-progress-text.maxed{ color:var(--accent-bright); font-weight:600; }
 
+  /* ---- Modal de detalle de rutina compartida ---- */
+  .modal-overlay{
+    position:fixed; inset:0;
+    background:rgba(0,0,0,0.55);
+    display:flex; align-items:flex-end; justify-content:center;
+    z-index:200;
+  }
+  .modal-overlay.hidden{ display:none; }
+  .modal-box{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:20px 20px 0 0;
+    padding:22px 20px 26px 20px;
+    width:100%; max-width:480px;
+    max-height:80vh;
+    overflow-y:auto;
+  }
+  @media (min-width: 560px){
+    .modal-overlay{ align-items:center; }
+    .modal-box{ border-radius:20px; }
+  }
+  .modal-title{ font-size:17px; font-weight:700; margin-bottom:2px; }
+  .modal-subtitle{ font-size:12px; color:var(--text-dim); margin-bottom:16px; }
+  .modal-block-row{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:10px 0; border-bottom:1px solid var(--border);
+    font-size:13px;
+  }
+  .modal-block-row:last-child{ border-bottom:none; }
+  .modal-block-label{ font-weight:600; }
+  .modal-block-score{ color:var(--text-dim); font-size:12px; }
+  .modal-actions{ display:flex; gap:10px; margin-top:20px; }
+  .modal-actions .btn-secondary{ flex:1; }
+  .modal-actions .start-btn{ flex:1; }
+
   .results-grid{
     display:grid;
     grid-template-columns:1fr 1fr;
@@ -1781,6 +1819,19 @@
 
       <span class="section-label" style="margin-top:22px;">Actividad reciente</span>
       <div id="family-activity-list"></div>
+    </div>
+  </div>
+
+  <!-- ===== MODAL: detalle de rutina compartida ===== -->
+  <div class="modal-overlay hidden" id="routine-detail-modal">
+    <div class="modal-box">
+      <div class="modal-title" id="routine-detail-title"></div>
+      <div class="modal-subtitle" id="routine-detail-subtitle"></div>
+      <div id="routine-detail-blocks"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="routine-detail-close-btn">Cerrar</button>
+        <button class="start-btn hidden" id="routine-detail-use-btn">📋 Usar esta rutina</button>
+      </div>
     </div>
   </div>
 
@@ -2473,6 +2524,7 @@ window.addEventListener('online', trySyncPendingAccounts);
 let presenceRef = null;
 let presenceListenerRef = null; // listener en vivo de "conectados ahora", solo activo mientras se ve la pantalla Comunidad
 let activityListenerRef = null; // listener en vivo de "actividad reciente" (incluye reacciones), solo activo mientras se ve la pantalla Comunidad
+let lastActivityEntries = []; // último snapshot del feed — para abrir el detalle de una rutina al hacer click
 let presenceConnectedRef = null; // listener de '.info/connected' — vuelve a escribir la presencia en cada reconexión
 function disconnectPresence(){
   if(presenceConnectedRef){ fbDb.ref('.info/connected').off('value', presenceConnectedRef); presenceConnectedRef = null; }
@@ -2887,6 +2939,12 @@ const starProgressEl = document.getElementById('star-progress');
 const starProgressFillEl = document.getElementById('star-progress-fill');
 const starProgressMarksEl = document.getElementById('star-progress-marks');
 const starProgressTextEl = document.getElementById('star-progress-text');
+const routineDetailModal = document.getElementById('routine-detail-modal');
+const routineDetailTitleEl = document.getElementById('routine-detail-title');
+const routineDetailSubtitleEl = document.getElementById('routine-detail-subtitle');
+const routineDetailBlocksEl = document.getElementById('routine-detail-blocks');
+const routineDetailCloseBtn = document.getElementById('routine-detail-close-btn');
+const routineDetailUseBtn = document.getElementById('routine-detail-use-btn');
 const resAvg = document.getElementById('res-avg');
 const resBest = document.getElementById('res-best');
 const resBestStat = document.getElementById('res-best-stat');
@@ -5387,13 +5445,20 @@ function syncMemberSnapshot(){
 // oculto temporalmente el ranking de la Comunidad — vuelve a poner esto en true (y quita el "hidden" de esos dos elementos en el HTML) para reactivarlo
 const SHOW_LEADERBOARD = false;
 const REACTION_EMOJIS = ['👏', '🔥', '💪', '🎉'];
-function pushFamilyActivity(label, score, isRecord, instrumentLabel){
+function pushFamilyActivity(label, score, isRecord, instrumentLabel, routineBlocks){
   if(!fbReady) return;
   const profile = profiles.find(p => p.id === activeProfileId);
   if(!profile || profile.syncStatus !== 'synced') return;
-  fbDb.ref('global/activity').push({
+  const payload = {
     name: profile.name, accent: profile.accent, label, score, ts: Date.now(), isRecord: !!isRecord, instrument: instrumentLabel || '', type: 'session'
-  }).catch(()=>{});
+  };
+  if(routineBlocks && routineBlocks.length){
+    payload.type = 'playlist';
+    // snapshot ligero: qué se practicó (para mostrar en el detalle) + la config completa (para poder "usar esta rutina")
+    payload.blockResults = routineBlocks.results;
+    payload.blocks = routineBlocks.blocks;
+  }
+  fbDb.ref('global/activity').push(payload).catch(()=>{});
 }
 function renderFamilyScreen(){
   const contentEl = document.getElementById('family-content');
@@ -5453,6 +5518,7 @@ function renderFamilyScreen(){
     const entries = Object.entries(snap.val() || {})
       .map(([id, e]) => ({ id, ...e }))
       .sort((a,b)=> b.ts - a.ts);
+    lastActivityEntries = entries; // guardamos referencia para poder abrir el detalle al hacer click
     activityListEl.innerHTML = entries.length ? entries.map(e => {
       const text = e.type === 'join'
         ? `${e.name} se unió a la comunidad 👋`
@@ -5465,16 +5531,17 @@ function renderFamilyScreen(){
         counts[emoji] = (counts[emoji]||0) + 1;
         if(uid === myUid) myReaction = emoji;
       });
+      const isPlaylist = e.type === 'playlist' && e.blockResults && e.blockResults.length;
       const reactionButtons = REACTION_EMOJIS.map(emoji => {
         const count = counts[emoji] || 0;
         const isMine = myReaction === emoji;
         return `<button class="reaction-btn${isMine ? ' active' : ''}" data-activity-id="${e.id}" data-emoji="${emoji}">${emoji}${count > 0 ? ' ' + count : ''}</button>`;
       }).join('');
       return `
-        <div class="activity-entry${e.isRecord ? ' record' : ''}">
+        <div class="activity-entry${e.isRecord ? ' record' : ''}${isPlaylist ? ' clickable' : ''}" ${isPlaylist ? `data-activity-id="${e.id}"` : ''}>
           <div class="activity-top">
             <span class="profile-dot" style="background:${ACCENT_HEX[e.accent] || ACCENT_HEX.turquesa}; margin-top:3px;"></span>
-            <span class="activity-text">${text}</span>
+            <span class="activity-text">${text}${isPlaylist ? ' <span class="activity-detail-hint">· ver detalle</span>' : ''}</span>
             <span class="activity-time">${timeAgo(e.ts)}</span>
           </div>
           <div class="reaction-row">${reactionButtons}</div>
@@ -5494,9 +5561,48 @@ function toggleActivityReaction(activityId, emoji){
   }).catch(()=>{});
 }
 document.getElementById('family-activity-list').addEventListener('click', (e)=>{
-  const btn = e.target.closest('.reaction-btn');
-  if(!btn) return;
-  toggleActivityReaction(btn.dataset.activityId, btn.dataset.emoji);
+  const reactionBtn = e.target.closest('.reaction-btn');
+  if(reactionBtn){
+    toggleActivityReaction(reactionBtn.dataset.activityId, reactionBtn.dataset.emoji);
+    return;
+  }
+  const entryEl = e.target.closest('.activity-entry.clickable');
+  if(entryEl) openRoutineDetail(entryEl.dataset.activityId);
+});
+function openRoutineDetail(activityId){
+  const entry = lastActivityEntries.find(x => x.id === activityId);
+  if(!entry || !entry.blockResults) return;
+  routineDetailTitleEl.textContent = `«${entry.label}»`;
+  routineDetailSubtitleEl.textContent = `Compartida por ${entry.name} · ${entry.blockResults.length} bloque${entry.blockResults.length===1?'':'s'}`;
+  routineDetailBlocksEl.innerHTML = entry.blockResults.map((r,i)=>`
+    <div class="modal-block-row">
+      <span class="modal-block-label">${i+1}. ${r.label}</span>
+      <span class="modal-block-score">${r.score} aciertos</span>
+    </div>
+  `).join('');
+  // "Usar esta rutina" solo si tenemos la config completa (blocks) — sesiones antiguas puede que no la tengan
+  if(entry.blocks && entry.blocks.length){
+    routineDetailUseBtn.classList.remove('hidden');
+    routineDetailUseBtn.dataset.activityId = activityId;
+  } else {
+    routineDetailUseBtn.classList.add('hidden');
+  }
+  routineDetailModal.classList.remove('hidden');
+}
+function closeRoutineDetail(){
+  routineDetailModal.classList.add('hidden');
+}
+routineDetailCloseBtn.addEventListener('click', closeRoutineDetail);
+routineDetailModal.addEventListener('click', (e)=>{ if(e.target === routineDetailModal) closeRoutineDetail(); });
+routineDetailUseBtn.addEventListener('click', ()=>{
+  const entry = lastActivityEntries.find(x => x.id === routineDetailUseBtn.dataset.activityId);
+  if(!entry || !entry.blocks) return;
+  // clona los bloques con ids nuevos para no chocar con los del original — es una copia independiente
+  const clonedBlocks = entry.blocks.map(b => ({ ...b, id: genId() }));
+  playlists.push({ id: genId(), name: `${entry.label} (de ${entry.name})`, advanceMode: 'auto', blocks: clonedBlocks });
+  savePlaylists();
+  closeRoutineDetail();
+  alert('Rutina añadida a tus rutinas ✓');
 });
 document.getElementById('open-family-btn').addEventListener('click', ()=>{
   renderFamilyScreen();
@@ -5744,7 +5850,10 @@ function showPlaylistSummary(){
   }).join('');
   playlistSummaryListEl.innerHTML = html;
   recordPlaylistRun(state.playlist.id, state.blockResults); // guarda esta ejecución para poder comparar en el futuro
-  pushFamilyActivity(state.playlist.name, totalScore, state.hadRecord, currentInstrumentLabel()); // comparte con la comunidad, si hay conexión
+  pushFamilyActivity(state.playlist.name, totalScore, state.hadRecord, currentInstrumentLabel(), {
+    results: state.blockResults.map(r=>({label:r.label, score:r.score})),
+    blocks: state.playlist.blocks // config completa — permite que otros la importen tal cual con "Usar esta rutina"
+  });
   playlistRunState = null;
   showScreen('playlist-summary');
 }
