@@ -3819,6 +3819,13 @@ function isResponderQuiz(){
 }
 
 // ---------- Selector global de instrumento + entrada (pantalla de inicio, 3 opciones en una) ----------
+// Móvil/tablet no tiene sentido para el modo MIDI: en iOS no existe Web MIDI en ningún navegador,
+// y en Android aunque exista la API, nadie conecta un teclado MIDI a un móvil/tablet en la práctica.
+function esDispositivoMovilOTablet(){
+  const esTactil = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  const pantallaPequeña = window.matchMedia('(max-width: 1024px)').matches;
+  return esTactil && pantallaPequeña;
+}
 function loadInstrumentPref(){
   try{
     const raw = storageGet(STORAGE_INSTRUMENT_KEY);
@@ -3833,6 +3840,12 @@ function loadInputModePref(){
     const raw = storageGet(STORAGE_INPUT_MODE_KEY);
     inputMode = raw === 'midi' ? 'midi' : 'metronome';
   }catch(e){ inputMode = 'metronome'; }
+  // si el ajuste guardado (p.ej. desde el portátil) era MIDI pero ahora se abre desde móvil/tablet,
+  // no lo dejamos activo: no hay forma de que funcione, así que se reasigna a metrónomo.
+  if(inputMode === 'midi' && esDispositivoMovilOTablet()){
+    inputMode = 'metronome';
+    saveInputModePref();
+  }
 }
 function saveInputModePref(){
   try{ storageSet(STORAGE_INPUT_MODE_KEY, inputMode); }catch(e){}
@@ -3907,8 +3920,10 @@ function renderPianoSizeRow(){
 
 function renderHomeInstrumentRow(){
   const mode = currentHomeMode();
+  const ocultarMidi = esDispositivoMovilOTablet();
   homeInstrumentRow.querySelectorAll('.segment').forEach(b=>{
     b.classList.toggle('selected', b.dataset.mode === mode);
+    if(b.dataset.mode === 'piano_midi'){ b.classList.toggle('hidden', ocultarMidi); }
   });
   updateExerciseListGuitarFilter();
 }
