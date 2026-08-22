@@ -1332,27 +1332,59 @@
 
   /* ---- Modo compacto: pantalla de sesión en móvil, para que quepa todo sin necesitar scroll ---- */
   @media (max-width: 600px){
-    body.in-session{ padding:10px; }
+    body.in-session{ padding:10px; align-items:flex-start; }
     body.in-session .app{ max-width:none; }
     body.in-session .header-row{ margin-bottom:2px; }
     body.in-session .eyebrow{ display:none; }
     body.in-session h1{ font-size:19px; margin:0; }
     body.in-session .panel{ padding:14px; border-radius:16px; }
     body.in-session .session-top{ margin-bottom:10px; }
-    body.in-session .target-wrap{ margin:8px 0 12px 0; }
+    body.in-session .target-wrap{ margin:8px 0 10px 0; }
     body.in-session .target-note{ font-size:clamp(46px, 15vw, 84px); }
     body.in-session .target-note.size-md{ font-size:clamp(30px, 9vw, 54px); }
     body.in-session .target-note.size-sm{ font-size:clamp(24px, 7vw, 40px); }
     body.in-session .target-note.size-xs{ font-size:clamp(20px, 5vw, 30px); }
-    body.in-session .chord-circle-wrap{ max-width:210px; margin:2px auto 8px auto; }
-    body.in-session .guitar-wrap{ max-width:170px; margin:0 auto; }
-    body.in-session .guitar-help-layout.side-by-side{ gap:10px; }
-    body.in-session .guitar-help-layout.side-by-side .chord-circle-wrap{ flex:0 1 150px; max-width:150px; margin-top:0; }
-    body.in-session .guitar-help-layout.side-by-side .guitar-wrap{ flex:0 1 130px; max-width:130px; }
-    body.in-session .circle-node-label{ font-size:15px; }
-    body.in-session .circle-node-label.current-label{ font-size:18px; }
+
+    /* tira compacta anterior/actual/siguiente en vez del círculo completo de 12 — ver .chord-strip */
+    body.in-session .chord-strip{
+      display:flex; align-items:center; justify-content:center; gap:8px;
+      margin:4px auto 16px auto;
+    }
+    body.in-session .chord-strip-item{
+      display:flex; align-items:center; justify-content:center;
+      border-radius:50%;
+      background:var(--surface-alt);
+      border:1.5px solid var(--border);
+      color:var(--text-dim);
+      font-weight:700;
+      font-family:'Inter',sans-serif;
+      flex-shrink:0;
+    }
+    body.in-session .chord-strip-item.prev,
+    body.in-session .chord-strip-item.next{ width:46px; height:46px; font-size:14px; opacity:0.65; }
+    body.in-session .chord-strip-item.current{
+      width:80px; height:80px; font-size:26px;
+      background:var(--accent); border-color:var(--accent-bright); color:var(--bg);
+      box-shadow:0 0 18px 2px rgba(var(--accent-rgb),0.5);
+    }
+    body.in-session .chord-strip-arrow{ color:var(--text-dim); font-size:16px; opacity:0.5; flex-shrink:0; }
+
+    /* con la tira compacta ocupando poco alto, dejamos que diapasón/piano crezcan a lo ancho completo */
+    body.in-session .guitar-help-layout,
+    body.in-session .guitar-help-layout.side-by-side{
+      display:block;
+    }
+    body.in-session .guitar-wrap,
+    body.in-session .guitar-help-layout.side-by-side .guitar-wrap{
+      max-width:340px; flex:none; margin:0 auto;
+    }
+    body.in-session .chord-circle-wrap,
+    body.in-session .guitar-help-layout.side-by-side .chord-circle-wrap{
+      max-width:none; flex:none; margin-top:0;
+    }
+
     body.in-session .piano-wrap{ padding-top:6px; padding-bottom:2px; }
-    body.in-session .piano{ height:88px; }
+    body.in-session .piano{ height:110px; }
     body.in-session .hand-progress{ margin-top:8px; }
     body.in-session .session-actions-row{ margin-top:14px; gap:6px; }
     body.in-session .show-help-btn,
@@ -4250,6 +4282,9 @@ document.addEventListener('visibilitychange', ()=>{
     resumeSession();
   }
 });
+window.addEventListener('resize', ()=>{
+  if(sessionActive && getExerciseDef().isChords) renderChordCircle();
+});
 
 const resetStatsBtn = document.getElementById('reset-stats-btn');
 resetStatsBtn.addEventListener('click', (e)=>{
@@ -4443,9 +4478,18 @@ function showNextNoteTarget(){
 
 // Dibuja el círculo de cuartas/quintas como reloj de 12 posiciones: la actual resaltada en dorado,
 // las ya completadas en esta vuelta en verde, el resto en blanco hueco. Se redibuja en cada acorde.
+// En móvil (pantalla estrecha) el círculo completo ocupa demasiado — en su lugar se muestra solo
+// anterior/actual/siguiente, una tira compacta horizontal (ver .chord-strip).
+function esPantallaCompactaSesion(){
+  return window.matchMedia('(max-width: 600px)').matches;
+}
 function renderChordCircle(){
   const seq = getChordSequence();
   const quality = getChordQuality();
+  if(esPantallaCompactaSesion()){
+    renderChordStripCompact(seq, quality);
+    return;
+  }
   const cx = 200, cy = 200, R = 148, nodeR = 27, nodeRCurrent = 34;
 
   const points = [];
@@ -4478,6 +4522,23 @@ function renderChordCircle(){
 
   svg += `</svg>`;
   chordCircleWrap.innerHTML = svg;
+}
+function renderChordStripCompact(seq, quality){
+  const n = seq.length;
+  const prevIdx = (chordSequenceIndex - 1 + n) % n;
+  const nextIdx = (chordSequenceIndex + 1) % n;
+  const prevLabel = chordDisplayLabel(seq[prevIdx], quality);
+  const curLabel = chordDisplayLabel(seq[chordSequenceIndex], quality);
+  const nextLabel = chordDisplayLabel(seq[nextIdx], quality);
+  chordCircleWrap.innerHTML = `
+    <div class="chord-strip">
+      <div class="chord-strip-item prev">${prevLabel}</div>
+      <div class="chord-strip-arrow">→</div>
+      <div class="chord-strip-item current">${curLabel}</div>
+      <div class="chord-strip-arrow">→</div>
+      <div class="chord-strip-item next">${nextLabel}</div>
+    </div>
+  `;
 }
 
 function showNextChordTarget(skipAutoAdvance){
