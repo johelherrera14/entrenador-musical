@@ -857,11 +857,12 @@
     color:var(--text);
   }
   .session-top{
-    display:flex; justify-content:space-between; align-items:center;
+    display:grid; grid-template-columns:1fr auto 1fr; align-items:center;
     margin-bottom:28px;
     font-size:13px;
     color:var(--text-dim);
   }
+  .session-top > .timer{ justify-self:end; }
   .timer{font-size:20px; color:var(--accent-bright); font-weight:700;}
   .score-live{font-size:20px; color:var(--text); font-weight:700;}
 
@@ -876,10 +877,13 @@
     font-size:clamp(90px, 22vw, 150px);
     line-height:1;
     color:var(--text);
-    transition:color 0.15s, transform 0.15s;
+    transition:color 0.15s, transform 0.15s, font-size 0.15s;
   }
   .target-note.flash-hit{color:var(--hit); transform:scale(1.06);}
   .target-note.flash-miss{color:var(--miss);}
+  .target-note.size-md{ font-size:clamp(46px, 11vw, 84px); }
+  .target-note.size-sm{ font-size:clamp(32px, 7.5vw, 56px); }
+  .target-note.size-xs{ font-size:clamp(24px, 5.5vw, 40px); }
   .chord-circle-wrap{
     width:100%;
     max-width:360px;
@@ -2925,6 +2929,15 @@ const liveScore = document.getElementById('live-score');
 const liveTimer = document.getElementById('live-timer');
 const targetLabelEl = document.getElementById('target-label');
 const targetNoteEl = document.getElementById('target-note');
+// escribe el texto objetivo y ajusta el tamaño de letra según su longitud — así "D" y "Tritono (4ª aum / 5ª dim)" se ven ambos equilibrados, sin saltos bruscos
+function setTargetNote(text){
+  targetNoteEl.textContent = text;
+  targetNoteEl.classList.remove('size-md','size-sm','size-xs');
+  const len = text.length;
+  if(len > 18) targetNoteEl.classList.add('size-xs');
+  else if(len > 10) targetNoteEl.classList.add('size-sm');
+  else if(len > 4) targetNoteEl.classList.add('size-md');
+}
 const handProgressEl = document.getElementById('hand-progress');
 const chordCircleWrap = document.getElementById('chord-circle-wrap');
 const pianoEl = document.getElementById('piano');
@@ -4247,7 +4260,7 @@ function showNextNoteTarget(){
     const pc = pickGuitarLevelTarget();
     targetPC = pc;
     targetSpelling = pcDisplayName(pc);
-    targetNoteEl.textContent = targetSpelling;
+    setTargetNote(targetSpelling);
     targetNoteEl.classList.remove('flash-hit','flash-miss');
     targetShownAt = performance.now();
     handProgressEl.classList.add('hidden'); // no aplica en este modo
@@ -4256,7 +4269,7 @@ function showNextNoteTarget(){
   const next = randomTarget();
   targetPC = next.pc;
   targetSpelling = next.name;
-  targetNoteEl.textContent = targetSpelling;
+  setTargetNote(targetSpelling);
   targetNoteEl.classList.remove('flash-hit','flash-miss');
   targetShownAt = performance.now();
 
@@ -4316,7 +4329,7 @@ function showNextChordTarget(skipAutoAdvance){
   chordTargetTones = getChordTones(rootPc, quality);
   currentChordLabel = chordDisplayLabel(rootPc, quality);
 
-  targetNoteEl.textContent = currentChordLabel;
+  setTargetNote(currentChordLabel);
   targetNoteEl.classList.remove('flash-hit','flash-miss');
   targetShownAt = performance.now();
 
@@ -4531,9 +4544,9 @@ function showNextIntervalTarget(){
     intervalLowMidi = null;
     intervalHighMidi = null;
 
-    targetNoteEl.textContent = intervalSentido === 'name2dist'
+    setTargetNote(intervalSentido === 'name2dist'
       ? intervalTargetData.name
-      : intervalDistanceLabel(intervalTargetData);
+      : intervalDistanceLabel(intervalTargetData));
     targetNoteEl.classList.remove('flash-hit','flash-miss');
 
     const band = getCurrentBand();
@@ -4552,16 +4565,14 @@ function showNextIntervalTarget(){
 
     if(intervalSentido === 'name2dist'){
       targetNoteEl.classList.remove('hidden');
-      targetNoteEl.textContent = intervalTargetData.name;
-      targetNoteEl.classList.remove('flash-hit','flash-miss');
+      setTargetNote(intervalTargetData.name);
       renderIntervalQuizButtons(
         INTERVALS.map(iv => ({ value: iv.semitones, label: iv.semitones + ' st' })),
         intervalTargetData.semitones
       );
     } else {
       targetNoteEl.classList.remove('hidden');
-      targetNoteEl.textContent = intervalDistanceLabel(intervalTargetData);
-      targetNoteEl.classList.remove('flash-hit','flash-miss');
+      setTargetNote(intervalDistanceLabel(intervalTargetData));
       renderIntervalQuizButtons(
         INTERVALS.map(iv => ({ value: iv.semitones, label: iv.name })),
         intervalTargetData.semitones
