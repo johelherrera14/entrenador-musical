@@ -5592,6 +5592,9 @@ if(activeProfileId && profiles.some(p=>p.id===activeProfileId)){
       selectExercise(lastExercise, true);
     }
     showScreen('exercise');
+  } else if(lastScreen === 'family'){
+    renderFamilyScreen(); // Comunidad necesita pedir sus datos a Firebase — showScreen() por sí solo no lo hace
+    showScreen('family');
   } else if(RESTORABLE_SCREENS.includes(lastScreen)){
     showScreen(lastScreen);
   } else {
