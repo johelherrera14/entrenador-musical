@@ -1177,6 +1177,49 @@
   }
   .score-hero-sub .new-record-tag{margin-top:0; margin-left:6px;}
 
+  .star-progress{
+    margin-top:18px;
+    padding-top:16px;
+    border-top:1px solid var(--border);
+  }
+  .star-progress-track{
+    position:relative;
+    height:8px;
+    border-radius:5px;
+    background:var(--surface-alt);
+    margin:0 10px;
+    overflow:visible;
+  }
+  .star-progress-fill{
+    height:100%;
+    border-radius:5px;
+    background:linear-gradient(90deg, var(--accent), var(--accent-bright));
+    width:0%;
+    transition:width 0.5s ease;
+  }
+  .star-progress-marks span{
+    position:absolute;
+    top:50%;
+    transform:translate(-50%,-50%);
+    font-size:15px;
+    line-height:1;
+    color:var(--text-dim);
+    filter:grayscale(1) opacity(0.6);
+    transition:filter 0.3s ease, transform 0.3s ease;
+  }
+  .star-progress-marks span.reached{
+    filter:none;
+    transform:translate(-50%,-50%) scale(1.15);
+  }
+  .star-progress-text{
+    margin-top:14px;
+    font-size:13px;
+    color:var(--text-dim);
+    text-align:center;
+  }
+  .star-progress-text strong{ color:var(--accent-bright); font-weight:700; }
+  .star-progress-text.maxed{ color:var(--accent-bright); font-weight:600; }
+
   .results-grid{
     display:grid;
     grid-template-columns:1fr 1fr;
@@ -1678,6 +1721,18 @@
       <div class="score-hero-label" id="score-hero-label">Notas acertadas</div>
       <div class="score-hero-value" id="res-score">0</div>
       <div class="score-hero-sub" id="score-hero-sub">Récord en sesiones de 60 s: —</div>
+
+      <div class="star-progress hidden" id="star-progress">
+        <div class="star-progress-track">
+          <div class="star-progress-fill" id="star-progress-fill"></div>
+          <div class="star-progress-marks" id="star-progress-marks">
+            <span data-idx="0">★</span>
+            <span data-idx="1">★</span>
+            <span data-idx="2">★</span>
+          </div>
+        </div>
+        <p class="star-progress-text" id="star-progress-text"></p>
+      </div>
     </div>
     <div class="stat help-stat hidden" id="help-stat">
       <div class="stat-label">💡 Con ayuda (categoría aparte)</div>
@@ -2828,6 +2883,10 @@ const scoreHero = document.getElementById('score-hero');
 const scoreHeroLabel = document.getElementById('score-hero-label');
 const avgTimeLabelEl = document.getElementById('avg-time-label');
 const scoreHeroSub = document.getElementById('score-hero-sub');
+const starProgressEl = document.getElementById('star-progress');
+const starProgressFillEl = document.getElementById('star-progress-fill');
+const starProgressMarksEl = document.getElementById('star-progress-marks');
+const starProgressTextEl = document.getElementById('star-progress-text');
 const resAvg = document.getElementById('res-avg');
 const resBest = document.getElementById('res-best');
 const resBestStat = document.getElementById('res-best-stat');
@@ -2970,6 +3029,34 @@ function renderExerciseStars(){
     el.innerHTML = html;
   });
   syncMemberSnapshot(); // sube el total de estrellas a la comunidad, si hay conexión
+}
+// ---------- Barra "cuánto falta para la próxima estrella" — en la pantalla de resultados ----------
+function unitLabelFor(def){
+  return def.isChords ? 'acordes' : (def.isIntervals ? 'intervalos' : 'notas');
+}
+function renderStarProgress(exId){
+  const thresholds = STAR_THRESHOLDS[exId];
+  if(!thresholds){ starProgressEl.classList.add('hidden'); return; }
+  const def = getExerciseDef(exId);
+  const best = getBestScore(starModeKeyFor(exId), 60, exId) || 0;
+  const stars = computeStars(exId);
+  const maxT = thresholds[2];
+  const pct = Math.min(100, Math.round(best / maxT * 100));
+  starProgressFillEl.style.width = pct + '%';
+  starProgressMarksEl.querySelectorAll('span').forEach((span,i)=>{
+    span.style.left = (thresholds[i] / maxT * 100) + '%';
+    span.classList.toggle('reached', best >= thresholds[i]);
+  });
+  if(stars >= 3){
+    starProgressTextEl.classList.add('maxed');
+    starProgressTextEl.textContent = '🏆 ¡Ejercicio dominado! Ya tienes las 3 estrellas.';
+  } else {
+    starProgressTextEl.classList.remove('maxed');
+    const remaining = thresholds[stars] - best;
+    const nextStars = '⭐'.repeat(stars + 1);
+    starProgressTextEl.innerHTML = `Te faltan <strong>${remaining}</strong> ${unitLabelFor(def)} (mejor marca en 60 s) para tu próxima estrella ${nextStars}`;
+  }
+  starProgressEl.classList.remove('hidden');
 }
 
 // ---------- Persistent best score, por modo de mano + duración de sesión ----------
@@ -4744,6 +4831,7 @@ function buildResults(){
       resultsActionsPlaylistManual.classList.add('hidden');
       pushFamilyActivity(def.label, metronomeTargetsShown, false, currentInstrumentLabel()); // sesión suelta (no rutina), sin verificación — nunca hay récord aquí
     }
+    starProgressEl.classList.add('hidden'); // el metrónomo no cuenta para estrellas
     return;
   }
 
@@ -4794,6 +4882,7 @@ function buildResults(){
 
   playSessionEnd();
   renderExerciseStars(); // por si esta sesión cambió tu mejor marca en algún ejercicio
+  renderStarProgress(def.id); // cuánto falta para la próxima estrella en este ejercicio
   if(isNewScoreRecord || isNewTimeRecord) playRecordSparkle();
 
   if(helpedCount > 0){
