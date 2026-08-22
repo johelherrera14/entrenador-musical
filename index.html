@@ -1353,7 +1353,8 @@
   <div class="panel hidden" id="screen-profile-select">
     <span class="section-label">¿Quién eres?</span>
     <div id="profile-list"></div>
-    <button class="btn-secondary" id="new-profile-btn" style="width:100%; margin-top:14px;">+ Nuevo perfil</button>
+    <button class="btn-secondary" id="new-profile-btn" style="width:100%; margin-top:14px;">+ Soy nuevo aquí</button>
+    <button class="btn-secondary" id="login-profile-btn" style="width:100%; margin-top:10px;">Ya tengo cuenta</button>
     <button class="btn-secondary" id="forgot-pin-btn" style="width:100%; margin-top:10px;">¿Olvidaste tu PIN?</button>
 
     <div class="hidden" id="forgot-pin-form">
@@ -1361,6 +1362,16 @@
       <input type="email" id="forgot-pin-email-input" class="new-playlist-input" style="width:100%; margin-bottom:10px;" placeholder="tu@correo.com">
       <button class="start-btn" id="send-reset-btn">Enviar enlace de recuperación</button>
       <p class="picker-hint" id="forgot-pin-status" style="text-align:center; margin-top:10px;"></p>
+    </div>
+
+    <div class="hidden" id="login-profile-form">
+      <span class="section-label" style="margin-top:22px;">Correo electrónico</span>
+      <input type="email" id="login-email-input" class="new-playlist-input" style="width:100%; margin-bottom:10px;" placeholder="tu@correo.com">
+      <span class="section-label">PIN (6 dígitos)</span>
+      <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" id="login-pin-input" class="new-playlist-input" style="width:100%; margin-bottom:6px;" placeholder="••••••">
+      <p class="picker-hint" id="login-error" style="color:var(--miss);"></p>
+      <button class="start-btn" id="login-submit-btn" style="margin-top:14px;">Entrar</button>
+      <p class="picker-hint" id="login-status-note" style="text-align:center; margin-top:10px;"></p>
     </div>
 
     <div class="hidden" id="new-profile-form">
@@ -2479,13 +2490,13 @@ async function createFirebaseAccount(profileId, email, pin){
   if(!fbReady) return false;
   try{
     const cred = await fbAuth.createUserWithEmailAndPassword(email, pin);
-    await finishProfileSync(profileId, cred.user.uid);
+    await finishProfileSync(profileId, cred.user.uid, false);
     return true;
   }catch(e){
     if(e.code === 'auth/email-already-in-use'){
       try{
         const cred2 = await fbAuth.signInWithEmailAndPassword(email, pin);
-        await finishProfileSync(profileId, cred2.user.uid);
+        await finishProfileSync(profileId, cred2.user.uid, true);
         return true;
       }catch(e2){ console.error('Entrenador Musical — fallo al iniciar sesión:', e2.code, e2.message); return false; }
     }
@@ -2493,7 +2504,7 @@ async function createFirebaseAccount(profileId, email, pin){
     return false; // sigue pendiente — se reintentará más adelante
   }
 }
-async function finishProfileSync(profileId, uid){
+async function finishProfileSync(profileId, uid, isKnownExisting){
   const profile = profiles.find(p => p.id === profileId);
   if(!profile) return;
   const isFirstSync = profile.syncStatus !== 'synced'; // solo avisamos la primera vez que este perfil queda sincronizado, no en cada reintento
@@ -2515,10 +2526,13 @@ async function finishProfileSync(profileId, uid){
       }
     }catch(e){}
     if(activeProfileId === profileId) initializeAppForActiveProfile();
-  } else {
-    // primera vez que esta cuenta se sincroniza — subimos lo que ya había en este dispositivo
+  } else if(!isKnownExisting){
+    // de verdad es la primera vez que esta cuenta se sincroniza — subimos lo que ya había en este dispositivo
     pushProfileDataToCloud(profile);
   }
+  // si isKnownExisting es true y no se pudo bajar nada (p.ej. se cortó la conexión a mitad), NO subimos
+  // nada por precaución: podría machacar progreso real en la nube con datos locales vacíos. El usuario
+  // puede simplemente reintentar cuando tenga mejor conexión.
   fbDb.ref('users/' + uid + '/profile').set({
     name: profile.name, accent: profile.accent, localId: profile.id, updatedAt: Date.now()
   }).catch(()=>{});
@@ -2940,6 +2954,13 @@ const newProfileErrorEl = document.getElementById('new-profile-error');
 const newProfileSyncNoteEl = document.getElementById('new-profile-sync-note');
 const newProfileAccentRow = document.getElementById('new-profile-accent-row');
 const createProfileBtn = document.getElementById('create-profile-btn');
+const loginProfileBtn = document.getElementById('login-profile-btn');
+const loginProfileForm = document.getElementById('login-profile-form');
+const loginEmailInput = document.getElementById('login-email-input');
+const loginPinInput = document.getElementById('login-pin-input');
+const loginErrorEl = document.getElementById('login-error');
+const loginStatusNoteEl = document.getElementById('login-status-note');
+const loginSubmitBtn = document.getElementById('login-submit-btn');
 const themeRow = document.getElementById('theme-row');
 const accentSwatchRow = document.getElementById('accent-swatch-row');
 const backFromSettingsBtn = document.getElementById('back-from-settings-btn');
@@ -5754,6 +5775,7 @@ function renderProfileSelectScreen(){
     `).join('');
   }
   newProfileForm.classList.add('hidden');
+  loginProfileForm.classList.add('hidden');
   document.getElementById('forgot-pin-form').classList.add('hidden');
   document.getElementById('forgot-pin-email-input').value = '';
   document.getElementById('forgot-pin-status').textContent = '';
@@ -5767,6 +5789,10 @@ function renderProfileSelectScreen(){
   newProfileAccentRow.querySelectorAll('.accent-swatch').forEach(b=>{
     b.classList.toggle('selected', b.dataset.accentChoice === 'turquesa');
   });
+  loginEmailInput.value = '';
+  loginPinInput.value = '';
+  loginErrorEl.textContent = '';
+  loginStatusNoteEl.textContent = '';
 }
 async function activateProfile(profileId){
   activeProfileId = profileId;
@@ -5800,11 +5826,61 @@ profileListEl.addEventListener('click', (e)=>{
 });
 newProfileBtn.addEventListener('click', ()=>{
   document.getElementById('forgot-pin-form').classList.add('hidden');
+  loginProfileForm.classList.add('hidden');
   newProfileForm.classList.remove('hidden');
   newProfileNameInput.focus();
 });
+loginProfileBtn.addEventListener('click', ()=>{
+  document.getElementById('forgot-pin-form').classList.add('hidden');
+  newProfileForm.classList.add('hidden');
+  loginProfileForm.classList.remove('hidden');
+  loginEmailInput.focus();
+});
+loginSubmitBtn.addEventListener('click', async ()=>{
+  const email = loginEmailInput.value.trim();
+  const pin = loginPinInput.value.trim();
+  loginErrorEl.textContent = '';
+  if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+    loginErrorEl.textContent = 'Escribe un correo válido.';
+    loginEmailInput.focus();
+    return;
+  }
+  if(!/^\d{6}$/.test(pin)){
+    loginErrorEl.textContent = 'El PIN debe tener exactamente 6 dígitos.';
+    loginPinInput.focus();
+    return;
+  }
+  if(!fbReady){
+    loginErrorEl.textContent = 'No se pudo conectar con el servicio en línea — inténtalo de nuevo en un momento.';
+    return;
+  }
+  loginSubmitBtn.disabled = true;
+  loginStatusNoteEl.textContent = 'Conectando…';
+  try{
+    const cred = await fbAuth.signInWithEmailAndPassword(email, pin);
+    // perfil local provisional — nombre y color reales llegan al bajar los datos de la nube justo debajo
+    const id = 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+    profiles.push({ id, name: 'Yo', accent: 'turquesa', email, uid: null, syncStatus: 'pending' });
+    saveProfiles();
+    await finishProfileSync(id, cred.user.uid, true);
+    activateProfile(id);
+  }catch(e){
+    loginStatusNoteEl.textContent = '';
+    if(e.code === 'auth/user-not-found' || e.code === 'auth/invalid-credential' || e.code === 'auth/invalid-login-credentials'){
+      loginErrorEl.textContent = 'No existe ninguna cuenta con ese correo y PIN.';
+    } else if(e.code === 'auth/wrong-password'){
+      loginErrorEl.textContent = 'PIN incorrecto.';
+    } else {
+      loginErrorEl.textContent = 'No se pudo conectar. Inténtalo de nuevo.';
+      console.error('Entrenador Musical — fallo al iniciar sesión:', e.code, e.message);
+    }
+  }finally{
+    loginSubmitBtn.disabled = false;
+  }
+});
 document.getElementById('forgot-pin-btn').addEventListener('click', ()=>{
   newProfileForm.classList.add('hidden');
+  loginProfileForm.classList.add('hidden');
   const formEl = document.getElementById('forgot-pin-form');
   formEl.classList.toggle('hidden');
   if(!formEl.classList.contains('hidden')) document.getElementById('forgot-pin-email-input').focus();
