@@ -471,6 +471,47 @@
     background:var(--surface-alt);
     margin-bottom:10px;
   }
+  .activity-entry{
+    display:flex; flex-direction:column; gap:8px;
+    padding:12px 14px;
+    border-radius:14px;
+    background:var(--surface-alt);
+    margin-bottom:10px;
+  }
+  .activity-entry.record{
+    background:color-mix(in srgb, var(--accent) 8%, var(--surface-alt));
+  }
+  .activity-top{
+    display:flex; align-items:flex-start; gap:10px;
+  }
+  .activity-text{ flex:1; font-size:12.5px; line-height:1.45; }
+  .activity-time{
+    font-size:11px; color:var(--text-dim); white-space:nowrap; flex-shrink:0; margin-top:1px;
+  }
+  .reaction-row{
+    display:flex; gap:6px; flex-wrap:wrap;
+    padding-left:24px;
+  }
+  .reaction-btn{
+    display:flex; align-items:center; gap:4px;
+    padding:4px 10px;
+    border:1px solid var(--border);
+    background:transparent;
+    color:var(--text-dim);
+    border-radius:999px;
+    cursor:pointer;
+    font-family:'Inter',sans-serif;
+    font-size:12px;
+    line-height:1.2;
+    transition:all 0.15s;
+  }
+  .reaction-btn:hover{ border-color:var(--accent); }
+  .reaction-btn.active{
+    border-color:var(--accent);
+    background:color-mix(in srgb, var(--accent) 16%, transparent);
+    color:var(--text);
+    font-weight:600;
+  }
   .profile-select-btn{
     flex:1;
     display:flex; align-items:center; gap:10px;
@@ -2345,6 +2386,7 @@ async function createFirebaseAccount(profileId, email, pin){
 function finishProfileSync(profileId, uid){
   const profile = profiles.find(p => p.id === profileId);
   if(!profile) return;
+  const isFirstSync = profile.syncStatus !== 'synced'; // solo avisamos la primera vez que este perfil queda sincronizado, no en cada reintento
   profile.uid = uid;
   profile.syncStatus = 'synced';
   saveProfiles();
@@ -2352,6 +2394,11 @@ function finishProfileSync(profileId, uid){
     fbDb.ref('users/' + uid + '/profile').set({
       name: profile.name, accent: profile.accent, localId: profile.id, updatedAt: Date.now()
     }).catch(()=>{});
+    if(isFirstSync){
+      fbDb.ref('global/activity').push({
+        name: profile.name, accent: profile.accent, type: 'join', ts: Date.now()
+      }).catch(()=>{});
+    }
   }
 }
 async function trySyncPendingAccounts(){
@@ -2370,6 +2417,7 @@ window.addEventListener('online', trySyncPendingAccounts);
 // ---------- Presencia global (quién está conectado ahora) — todo el mundo comparte el mismo espacio ----------
 let presenceRef = null;
 let presenceListenerRef = null; // listener en vivo de "conectados ahora", solo activo mientras se ve la pantalla Comunidad
+let activityListenerRef = null; // listener en vivo de "actividad reciente" (incluye reacciones), solo activo mientras se ve la pantalla Comunidad
 let presenceConnectedRef = null; // listener de '.info/connected' — vuelve a escribir la presencia en cada reconexión
 function disconnectPresence(){
   if(presenceConnectedRef){ fbDb.ref('.info/connected').off('value', presenceConnectedRef); presenceConnectedRef = null; }
@@ -4612,6 +4660,20 @@ function currentInstrumentLabel(){
   return effectiveInputMode === 'midi' ? 'Piano (MIDI)' : 'Piano (metrónomo)';
 }
 
+// tiempo relativo legible para el feed de Comunidad (ej. "hace 5 min", "ayer")
+function timeAgo(ts){
+  const diffSec = Math.floor((Date.now() - ts) / 1000);
+  if(diffSec < 60) return 'ahora mismo';
+  const diffMin = Math.floor(diffSec / 60);
+  if(diffMin < 60) return `hace ${diffMin} min`;
+  const diffHour = Math.floor(diffMin / 60);
+  if(diffHour < 24) return `hace ${diffHour} h`;
+  const diffDay = Math.floor(diffHour / 24);
+  if(diffDay === 1) return 'ayer';
+  if(diffDay < 7) return `hace ${diffDay} días`;
+  return new Date(ts).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+}
+
 function endSession(){
   if(!sessionActive) return;
   sessionActive = false;
@@ -5235,12 +5297,13 @@ function syncMemberSnapshot(){
 }
 // oculto temporalmente el ranking de la Comunidad — vuelve a poner esto en true (y quita el "hidden" de esos dos elementos en el HTML) para reactivarlo
 const SHOW_LEADERBOARD = false;
+const REACTION_EMOJIS = ['👏', '🔥', '💪', '🎉'];
 function pushFamilyActivity(label, score, isRecord, instrumentLabel){
   if(!fbReady) return;
   const profile = profiles.find(p => p.id === activeProfileId);
   if(!profile || profile.syncStatus !== 'synced') return;
   fbDb.ref('global/activity').push({
-    name: profile.name, accent: profile.accent, label, score, ts: Date.now(), isRecord: !!isRecord, instrument: instrumentLabel || ''
+    name: profile.name, accent: profile.accent, label, score, ts: Date.now(), isRecord: !!isRecord, instrument: instrumentLabel || '', type: 'session'
   }).catch(()=>{});
 }
 function renderFamilyScreen(){
@@ -5295,22 +5358,64 @@ function renderFamilyScreen(){
     }).catch(()=>{ leaderboardListEl.innerHTML = '<p class="picker-hint">No se pudo cargar — revisa tu conexión.</p>'; });
   }
 
-  fbDb.ref('global/activity').limitToLast(15).once('value').then(snap=>{
-    const entries = Object.values(snap.val() || {}).sort((a,b)=> b.ts - a.ts);
-    activityListEl.innerHTML = entries.length ? entries.map(e => `
-      <div class="profile-row"${e.isRecord ? ' style="background:color-mix(in srgb, var(--accent) 8%, transparent); border-radius:10px;"' : ''}>
-        <span class="profile-dot" style="background:${ACCENT_HEX[e.accent] || ACCENT_HEX.turquesa};"></span>
-        <span style="flex:1; font-size:12.5px;">${e.name} completó «${e.label}»${e.instrument ? ' · ' + e.instrument : ''} — ${e.score} aciertos${e.isRecord ? ' 🏆' : ''}</span>
-      </div>
-    `).join('') : '<p class="picker-hint">Todavía no hay actividad reciente.</p>';
-  }).catch(()=>{ activityListEl.innerHTML = '<p class="picker-hint">No se pudo cargar — revisa tu conexión.</p>'; });
+  if(activityListenerRef) activityListenerRef.off();
+  activityListenerRef = fbDb.ref('global/activity').limitToLast(20);
+  activityListenerRef.on('value', snap=>{
+    const entries = Object.entries(snap.val() || {})
+      .map(([id, e]) => ({ id, ...e }))
+      .sort((a,b)=> b.ts - a.ts);
+    activityListEl.innerHTML = entries.length ? entries.map(e => {
+      const text = e.type === 'join'
+        ? `${e.name} se unió a la comunidad 👋`
+        : `${e.name} completó «${e.label}»${e.instrument ? ' · ' + e.instrument : ''} — ${e.score} aciertos${e.isRecord ? ' 🏆' : ''}`;
+      const myUid = profile.uid;
+      const reactions = e.reactions || {};
+      const counts = {};
+      let myReaction = null;
+      Object.entries(reactions).forEach(([uid, emoji])=>{
+        counts[emoji] = (counts[emoji]||0) + 1;
+        if(uid === myUid) myReaction = emoji;
+      });
+      const reactionButtons = REACTION_EMOJIS.map(emoji => {
+        const count = counts[emoji] || 0;
+        const isMine = myReaction === emoji;
+        return `<button class="reaction-btn${isMine ? ' active' : ''}" data-activity-id="${e.id}" data-emoji="${emoji}">${emoji}${count > 0 ? ' ' + count : ''}</button>`;
+      }).join('');
+      return `
+        <div class="activity-entry${e.isRecord ? ' record' : ''}">
+          <div class="activity-top">
+            <span class="profile-dot" style="background:${ACCENT_HEX[e.accent] || ACCENT_HEX.turquesa}; margin-top:3px;"></span>
+            <span class="activity-text">${text}</span>
+            <span class="activity-time">${timeAgo(e.ts)}</span>
+          </div>
+          <div class="reaction-row">${reactionButtons}</div>
+        </div>
+      `;
+    }).join('') : '<p class="picker-hint">Todavía no hay actividad reciente.</p>';
+  }, ()=>{ activityListEl.innerHTML = '<p class="picker-hint">No se pudo cargar — revisa tu conexión.</p>'; });
 }
+// alterna tu reacción a una actividad — un solo emoji por persona, tocar el mismo la quita
+function toggleActivityReaction(activityId, emoji){
+  const profile = profiles.find(p => p.id === activeProfileId);
+  if(!fbReady || !profile || profile.syncStatus !== 'synced') return;
+  const ref = fbDb.ref('global/activity/' + activityId + '/reactions/' + profile.uid);
+  ref.once('value').then(snap=>{
+    if(snap.val() === emoji) ref.remove().catch(()=>{});
+    else ref.set(emoji).catch(()=>{});
+  }).catch(()=>{});
+}
+document.getElementById('family-activity-list').addEventListener('click', (e)=>{
+  const btn = e.target.closest('.reaction-btn');
+  if(!btn) return;
+  toggleActivityReaction(btn.dataset.activityId, btn.dataset.emoji);
+});
 document.getElementById('open-family-btn').addEventListener('click', ()=>{
   renderFamilyScreen();
   showScreen('family');
 });
 document.getElementById('back-from-family-btn').addEventListener('click', ()=>{
   if(presenceListenerRef){ presenceListenerRef.off(); presenceListenerRef = null; }
+  if(activityListenerRef){ activityListenerRef.off(); activityListenerRef = null; }
   showScreen('menu');
 });
 
