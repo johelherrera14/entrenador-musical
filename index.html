@@ -2479,13 +2479,13 @@ async function createFirebaseAccount(profileId, email, pin){
   if(!fbReady) return false;
   try{
     const cred = await fbAuth.createUserWithEmailAndPassword(email, pin);
-    finishProfileSync(profileId, cred.user.uid);
+    await finishProfileSync(profileId, cred.user.uid);
     return true;
   }catch(e){
     if(e.code === 'auth/email-already-in-use'){
       try{
         const cred2 = await fbAuth.signInWithEmailAndPassword(email, pin);
-        finishProfileSync(profileId, cred2.user.uid);
+        await finishProfileSync(profileId, cred2.user.uid);
         return true;
       }catch(e2){ console.error('Entrenador Musical — fallo al iniciar sesión:', e2.code, e2.message); return false; }
     }
@@ -2493,24 +2493,114 @@ async function createFirebaseAccount(profileId, email, pin){
     return false; // sigue pendiente — se reintentará más adelante
   }
 }
-function finishProfileSync(profileId, uid){
+async function finishProfileSync(profileId, uid){
   const profile = profiles.find(p => p.id === profileId);
   if(!profile) return;
   const isFirstSync = profile.syncStatus !== 'synced'; // solo avisamos la primera vez que este perfil queda sincronizado, no en cada reintento
   profile.uid = uid;
   profile.syncStatus = 'synced';
   saveProfiles();
-  if(fbReady){
-    fbDb.ref('users/' + uid + '/profile').set({
-      name: profile.name, accent: profile.accent, localId: profile.id, updatedAt: Date.now()
+  if(!fbReady) return;
+  // ¿esta cuenta ya tenía datos guardados en la nube (viene de OTRO dispositivo)?
+  // si es así, esos datos mandan sobre lo que haya (poco o nada) en este dispositivo nuevo.
+  const pulled = await pullProfileDataFromCloud(profile);
+  if(pulled){
+    try{
+      const cloudProfileSnap = await fbDb.ref('users/' + uid + '/profile').once('value');
+      const cp = cloudProfileSnap.val();
+      if(cp){
+        if(cp.name) profile.name = cp.name;
+        if(cp.accent) profile.accent = cp.accent;
+        saveProfiles();
+      }
+    }catch(e){}
+    if(activeProfileId === profileId) initializeAppForActiveProfile();
+  } else {
+    // primera vez que esta cuenta se sincroniza — subimos lo que ya había en este dispositivo
+    pushProfileDataToCloud(profile);
+  }
+  fbDb.ref('users/' + uid + '/profile').set({
+    name: profile.name, accent: profile.accent, localId: profile.id, updatedAt: Date.now()
+  }).catch(()=>{});
+  if(isFirstSync){
+    fbDb.ref('global/activity').push({
+      name: profile.name, accent: profile.accent, type: 'join', ts: Date.now()
     }).catch(()=>{});
-    if(isFirstSync){
-      fbDb.ref('global/activity').push({
-        name: profile.name, accent: profile.accent, type: 'join', ts: Date.now()
-      }).catch(()=>{});
-    }
   }
 }
+
+// ---------- Sincronización de TODO el progreso (récords, estrellas, playlists, instrumento, ajustes) ----------
+// Cada perfil guarda sus datos en localStorage bajo claves "p_{profileId}_...". Aquí los empaquetamos
+// tal cual (mismo nombre corto de clave, sin el prefijo de perfil) para subirlos/bajarlos de Firebase.
+function collectProfileLocalData(profileId){
+  const prefix = 'p_' + profileId + '_';
+  const data = {};
+  try{
+    for(let i=0;i<window.localStorage.length;i++){
+      const k = window.localStorage.key(i);
+      if(k && k.indexOf(prefix) === 0){
+        data[k.slice(prefix.length)] = window.localStorage.getItem(k);
+      }
+    }
+  }catch(e){}
+  return data;
+}
+function applyProfileLocalData(profileId, data){
+  if(!data) return;
+  const prefix = 'p_' + profileId + '_';
+  try{
+    // la nube es la versión "buena" al hacer pull — primero limpiamos este perfil en el dispositivo
+    // para que también se reflejen los borrados (p.ej. estadísticas reseteadas en otro dispositivo)
+    Object.keys(window.localStorage).forEach(k=>{
+      if(k.indexOf(prefix) === 0) window.localStorage.removeItem(k);
+    });
+    Object.keys(data).forEach(shortKey=>{
+      const val = data[shortKey];
+      if(val === null || val === undefined) return;
+      window.localStorage.setItem(prefix + shortKey, String(val));
+    });
+  }catch(e){}
+}
+function withTimeout(promise, ms){
+  return Promise.race([
+    promise,
+    new Promise(resolve => setTimeout(()=> resolve(null), ms))
+  ]);
+}
+async function pullProfileDataFromCloud(profile){
+  if(!fbReady || !profile || !profile.uid) return false;
+  try{
+    const snap = await withTimeout(fbDb.ref('users/' + profile.uid + '/data').once('value'), 3000);
+    const data = snap && snap.val ? snap.val() : null;
+    if(data && Object.keys(data).length > 0){
+      applyProfileLocalData(profile.id, data);
+      return true;
+    }
+  }catch(e){ console.error('Entrenador Musical — fallo al descargar datos de la nube:', e); }
+  return false;
+}
+function pushProfileDataToCloud(profile){
+  if(!fbReady || !profile || profile.syncStatus !== 'synced' || !profile.uid) return;
+  const data = collectProfileLocalData(profile.id);
+  fbDb.ref('users/' + profile.uid + '/data').set(data).catch(()=>{});
+}
+let cloudPushTimer = null;
+function scheduleCloudPush(){
+  if(!activeProfileId) return;
+  const profile = profiles.find(p => p.id === activeProfileId);
+  if(!profile || profile.syncStatus !== 'synced' || !fbReady) return;
+  clearTimeout(cloudPushTimer);
+  cloudPushTimer = setTimeout(()=> pushProfileDataToCloud(profile), 2500);
+}
+function flushCloudPushNow(){
+  if(!cloudPushTimer || !activeProfileId) return;
+  clearTimeout(cloudPushTimer);
+  cloudPushTimer = null;
+  const profile = profiles.find(p => p.id === activeProfileId);
+  if(profile) pushProfileDataToCloud(profile);
+}
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden) flushCloudPushNow(); });
+window.addEventListener('pagehide', flushCloudPushNow);
 async function trySyncPendingAccounts(){
   if(!fbReady) return;
   const list = loadPendingSync();
@@ -2565,9 +2655,11 @@ function storageGet(key){
 }
 function storageSet(key, value){
   try{ window.localStorage.setItem(pkey(key), value); }catch(e){}
+  scheduleCloudPush();
 }
 function storageRemove(key){
   try{ window.localStorage.removeItem(pkey(key)); }catch(e){}
+  scheduleCloudPush();
 }
 function loadProfiles(){
   try{
@@ -5676,9 +5768,14 @@ function renderProfileSelectScreen(){
     b.classList.toggle('selected', b.dataset.accentChoice === 'turquesa');
   });
 }
-function activateProfile(profileId){
+async function activateProfile(profileId){
   activeProfileId = profileId;
   saveActiveProfileId();
+  const profile = profiles.find(p => p.id === profileId);
+  if(profile && profile.syncStatus === 'synced'){
+    // por si desde otro dispositivo se avanzó más recientemente, traemos lo último antes de pintar la app
+    await pullProfileDataFromCloud(profile);
+  }
   initializeAppForActiveProfile();
   showScreen('menu');
 }
@@ -5918,10 +6015,16 @@ function initializeAppForActiveProfile(){
   updateStartBtn();
 }
 
+(async function initApp(){
 loadProfiles();
 trySyncPendingAccounts(); // por si ahora sí hay conexión y quedaron cuentas a medias
 loadActiveProfileId();
 if(activeProfileId && profiles.some(p=>p.id===activeProfileId)){
+  const activeProfile = profiles.find(p=>p.id===activeProfileId);
+  if(activeProfile && activeProfile.syncStatus === 'synced'){
+    // traemos lo último de la nube antes de pintar, por si desde otro dispositivo se avanzó después de la última vez aquí
+    await pullProfileDataFromCloud(activeProfile);
+  }
   initializeAppForActiveProfile();
   // al recargar (F5), vuelve a la última pantalla "segura" donde estabas, en vez de mandarte siempre al menú
   const lastScreen = storageGet(STORAGE_LAST_SCREEN_KEY);
@@ -5945,6 +6048,7 @@ if(activeProfileId && profiles.some(p=>p.id===activeProfileId)){
   renderProfileSelectScreen();
   showScreen('profile-select');
 }
+})();
 </script>
 </body>
 </html>
