@@ -1680,8 +1680,8 @@
       <span class="section-label" style="margin-top:14px;">Conectados ahora</span>
       <div id="family-online-list"></div>
 
-      <span class="section-label" style="margin-top:22px;">Ranking — mejores marcas</span>
-      <div id="family-leaderboard-list"></div>
+      <span class="hidden section-label" style="margin-top:22px;" id="family-leaderboard-label">Ranking — mejores marcas</span>
+      <div class="hidden" id="family-leaderboard-list"></div>
 
       <span class="section-label" style="margin-top:22px;">Actividad reciente</span>
       <div id="family-activity-list"></div>
@@ -4606,6 +4606,12 @@ function sessionTick(){
   }
 }
 
+// texto legible del instrumento activo en el momento de completar la sesión, para el feed de Comunidad
+function currentInstrumentLabel(){
+  if(effectiveInstrument === 'guitar') return 'Guitarra';
+  return effectiveInputMode === 'midi' ? 'Piano (MIDI)' : 'Piano (metrónomo)';
+}
+
 function endSession(){
   if(!sessionActive) return;
   sessionActive = false;
@@ -4674,7 +4680,7 @@ function buildResults(){
       resultsActionsNormal.classList.remove('hidden');
       resultsActionsPlaylistAuto.classList.add('hidden');
       resultsActionsPlaylistManual.classList.add('hidden');
-      pushFamilyActivity(def.label, metronomeTargetsShown, false); // sesión suelta (no rutina), sin verificación — nunca hay récord aquí
+      pushFamilyActivity(def.label, metronomeTargetsShown, false, currentInstrumentLabel()); // sesión suelta (no rutina), sin verificación — nunca hay récord aquí
     }
     return;
   }
@@ -4791,7 +4797,7 @@ function buildResults(){
     resultsActionsNormal.classList.remove('hidden');
     resultsActionsPlaylistAuto.classList.add('hidden');
     resultsActionsPlaylistManual.classList.add('hidden');
-    pushFamilyActivity(def.label, score, isNewScoreRecord); // sesión suelta (no rutina) — se comparte igual, si hay conexión
+    pushFamilyActivity(def.label, score, isNewScoreRecord, currentInstrumentLabel()); // sesión suelta (no rutina) — se comparte igual, si hay conexión
   }
 
   if(reactionLog.length === 0){
@@ -5227,12 +5233,14 @@ function syncMemberSnapshot(){
     name: profile.name, accent: profile.accent, totalStars, updatedAt: Date.now()
   }).catch(()=>{});
 }
-function pushFamilyActivity(label, score, isRecord){
+// oculto temporalmente el ranking de la Comunidad — vuelve a poner esto en true (y quita el "hidden" de esos dos elementos en el HTML) para reactivarlo
+const SHOW_LEADERBOARD = false;
+function pushFamilyActivity(label, score, isRecord, instrumentLabel){
   if(!fbReady) return;
   const profile = profiles.find(p => p.id === activeProfileId);
   if(!profile || profile.syncStatus !== 'synced') return;
   fbDb.ref('global/activity').push({
-    name: profile.name, accent: profile.accent, label, score, ts: Date.now(), isRecord: !!isRecord
+    name: profile.name, accent: profile.accent, label, score, ts: Date.now(), isRecord: !!isRecord, instrument: instrumentLabel || ''
   }).catch(()=>{});
 }
 function renderFamilyScreen(){
@@ -5273,24 +5281,26 @@ function renderFamilyScreen(){
     `).join('') : '<p class="picker-hint">Nadie más está conectado ahora mismo.</p>';
   }, ()=>{ onlineListEl.innerHTML = '<p class="picker-hint">No se pudo cargar — revisa tu conexión.</p>'; });
 
-  fbDb.ref('global/members').once('value').then(snap=>{
-    const entries = Object.values(snap.val() || {}).sort((a,b)=> (b.totalStars||0) - (a.totalStars||0));
-    leaderboardListEl.innerHTML = entries.length ? entries.map((e,i) => `
-      <div class="profile-row">
-        <span style="width:20px; font-weight:700; color:var(--text-dim); font-size:13px;">${i+1}.</span>
-        <span class="profile-dot" style="background:${ACCENT_HEX[e.accent] || ACCENT_HEX.turquesa};"></span>
-        <span style="flex:1; font-size:13px; font-weight:600;">${e.name}</span>
-        <span style="font-size:12px; color:var(--accent);">${e.totalStars||0} ★</span>
-      </div>
-    `).join('') : '<p class="picker-hint">Todavía nadie tiene marcas guardadas.</p>';
-  }).catch(()=>{ leaderboardListEl.innerHTML = '<p class="picker-hint">No se pudo cargar — revisa tu conexión.</p>'; });
+  if(SHOW_LEADERBOARD){
+    fbDb.ref('global/members').once('value').then(snap=>{
+      const entries = Object.values(snap.val() || {}).sort((a,b)=> (b.totalStars||0) - (a.totalStars||0));
+      leaderboardListEl.innerHTML = entries.length ? entries.map((e,i) => `
+        <div class="profile-row">
+          <span style="width:20px; font-weight:700; color:var(--text-dim); font-size:13px;">${i+1}.</span>
+          <span class="profile-dot" style="background:${ACCENT_HEX[e.accent] || ACCENT_HEX.turquesa};"></span>
+          <span style="flex:1; font-size:13px; font-weight:600;">${e.name}</span>
+          <span style="font-size:12px; color:var(--accent);">${e.totalStars||0} ★</span>
+        </div>
+      `).join('') : '<p class="picker-hint">Todavía nadie tiene marcas guardadas.</p>';
+    }).catch(()=>{ leaderboardListEl.innerHTML = '<p class="picker-hint">No se pudo cargar — revisa tu conexión.</p>'; });
+  }
 
   fbDb.ref('global/activity').limitToLast(15).once('value').then(snap=>{
     const entries = Object.values(snap.val() || {}).sort((a,b)=> b.ts - a.ts);
     activityListEl.innerHTML = entries.length ? entries.map(e => `
       <div class="profile-row"${e.isRecord ? ' style="background:color-mix(in srgb, var(--accent) 8%, transparent); border-radius:10px;"' : ''}>
         <span class="profile-dot" style="background:${ACCENT_HEX[e.accent] || ACCENT_HEX.turquesa};"></span>
-        <span style="flex:1; font-size:12.5px;">${e.name} completó «${e.label}» — ${e.score} aciertos${e.isRecord ? ' 🏆' : ''}</span>
+        <span style="flex:1; font-size:12.5px;">${e.name} completó «${e.label}»${e.instrument ? ' · ' + e.instrument : ''} — ${e.score} aciertos${e.isRecord ? ' 🏆' : ''}</span>
       </div>
     `).join('') : '<p class="picker-hint">Todavía no hay actividad reciente.</p>';
   }).catch(()=>{ activityListEl.innerHTML = '<p class="picker-hint">No se pudo cargar — revisa tu conexión.</p>'; });
@@ -5540,7 +5550,7 @@ function showPlaylistSummary(){
   }).join('');
   playlistSummaryListEl.innerHTML = html;
   recordPlaylistRun(state.playlist.id, state.blockResults); // guarda esta ejecución para poder comparar en el futuro
-  pushFamilyActivity(state.playlist.name, totalScore, state.hadRecord); // comparte con la comunidad, si hay conexión
+  pushFamilyActivity(state.playlist.name, totalScore, state.hadRecord, currentInstrumentLabel()); // comparte con la comunidad, si hay conexión
   playlistRunState = null;
   showScreen('playlist-summary');
 }
