@@ -2282,6 +2282,10 @@ const STORAGE_PIANO_SIZE_KEY = 'entrenador_teclado_piano_size_v1';
 const STORAGE_THEME_KEY = 'entrenador_teclado_theme_v1';
 const STORAGE_ACCENT_KEY = 'entrenador_teclado_accent_v1';
 const STORAGE_EXERCISE_SNAPSHOTS_KEY = 'entrenador_teclado_exercise_snapshots_v1';
+const STORAGE_LAST_SCREEN_KEY = 'entrenador_teclado_last_screen_v1';
+const STORAGE_LAST_EXERCISE_KEY = 'entrenador_teclado_last_exercise_v1';
+// pantallas "seguras" para recordar entre recargas — quedan fuera las transitorias (cuenta atrás, sesión en vivo, resultados, resumen de rutina) porque su estado en memoria no sobrevive a un F5
+const RESTORABLE_SCREENS = ['menu', 'exercise', 'settings', 'playlists', 'family'];
 // ---------- Perfiles: cada persona tiene su propio espacio de datos en el mismo navegador ----------
 // ---------- Firebase: cuentas compartidas, presencia, ranking, actividad ----------
 const firebaseConfig = {
@@ -3415,6 +3419,7 @@ function selectExercise(exId, force){
   if(exId === selectedExercise && !force) return;
   snapshotCurrentExercise();
   selectedExercise = exId;
+  storageSet(STORAGE_LAST_EXERCISE_KEY, exId);
   restoreExercise(exId);
 
   const def = getExerciseDef();
@@ -3915,6 +3920,11 @@ function showScreen(name){
   if(name==='playlists') screenPlaylists.classList.remove('hidden');
   if(name==='playlist-summary') screenPlaylistSummary.classList.remove('hidden');
   if(name==='family') document.getElementById('screen-family').classList.remove('hidden');
+
+  // recuerda la última pantalla "segura" para poder volver aquí si se recarga la página (F5) — las transitorias (cuenta atrás, sesión, resultados, resumen) se excluyen a propósito
+  if(RESTORABLE_SCREENS.includes(name)){
+    storageSet(STORAGE_LAST_SCREEN_KEY, name);
+  }
 }
 
 // ---------- Session logic ----------
@@ -5574,7 +5584,19 @@ trySyncPendingAccounts(); // por si ahora sí hay conexión y quedaron cuentas a
 loadActiveProfileId();
 if(activeProfileId && profiles.some(p=>p.id===activeProfileId)){
   initializeAppForActiveProfile();
-  showScreen('menu');
+  // al recargar (F5), vuelve a la última pantalla "segura" donde estabas, en vez de mandarte siempre al menú
+  const lastScreen = storageGet(STORAGE_LAST_SCREEN_KEY);
+  if(lastScreen === 'exercise'){
+    const lastExercise = storageGet(STORAGE_LAST_EXERCISE_KEY);
+    if(lastExercise && EXERCISES.some(e => e.id === lastExercise)){
+      selectExercise(lastExercise, true);
+    }
+    showScreen('exercise');
+  } else if(RESTORABLE_SCREENS.includes(lastScreen)){
+    showScreen(lastScreen);
+  } else {
+    showScreen('menu');
+  }
 } else {
   activeProfileId = null;
   applyAppearance(); // tema por defecto mientras se elige perfil
