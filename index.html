@@ -58,7 +58,7 @@
   [data-accent="esmeralda"]{ --accent:#10b981; --accent-bright:#34d399; --accent-rgb:16,185,129; --accent-contrast:#04211a; }
   [data-accent="azul"]{ --accent:#0ea5e9; --accent-bright:#38bdf8; --accent-rgb:14,165,233; --accent-contrast:#ffffff; }
   *{box-sizing:border-box;}
-  html,body{margin:0;padding:0;}
+  html,body{margin:0;padding:0;overflow-x:hidden;}
   body{
     background:
       radial-gradient(ellipse 900px 500px at 50% -10%, rgba(var(--accent-rgb),0.08), transparent 60%),
@@ -1329,6 +1329,35 @@
     cursor:pointer;
   }
   .btn-secondary:hover{border-color:var(--accent); color:var(--accent-bright);}
+
+  /* ---- Modo compacto: pantalla de sesión en móvil, para que quepa todo sin necesitar scroll ---- */
+  @media (max-width: 600px){
+    body.in-session{ padding:10px; }
+    body.in-session .app{ max-width:none; }
+    body.in-session .header-row{ margin-bottom:2px; }
+    body.in-session .eyebrow{ display:none; }
+    body.in-session h1{ font-size:19px; margin:0; }
+    body.in-session .panel{ padding:14px; border-radius:16px; }
+    body.in-session .session-top{ margin-bottom:10px; }
+    body.in-session .target-wrap{ margin:8px 0 12px 0; }
+    body.in-session .target-note{ font-size:clamp(46px, 15vw, 84px); }
+    body.in-session .target-note.size-md{ font-size:clamp(30px, 9vw, 54px); }
+    body.in-session .target-note.size-sm{ font-size:clamp(24px, 7vw, 40px); }
+    body.in-session .target-note.size-xs{ font-size:clamp(20px, 5vw, 30px); }
+    body.in-session .chord-circle-wrap{ max-width:210px; margin:2px auto 8px auto; }
+    body.in-session .guitar-wrap{ max-width:170px; margin:0 auto; }
+    body.in-session .guitar-help-layout.side-by-side{ gap:10px; }
+    body.in-session .guitar-help-layout.side-by-side .chord-circle-wrap{ flex:0 1 150px; max-width:150px; margin-top:0; }
+    body.in-session .guitar-help-layout.side-by-side .guitar-wrap{ flex:0 1 130px; max-width:130px; }
+    body.in-session .circle-node-label{ font-size:15px; }
+    body.in-session .circle-node-label.current-label{ font-size:18px; }
+    body.in-session .piano-wrap{ padding-top:6px; padding-bottom:2px; }
+    body.in-session .piano{ height:88px; }
+    body.in-session .hand-progress{ margin-top:8px; }
+    body.in-session .session-actions-row{ margin-top:14px; gap:6px; }
+    body.in-session .show-help-btn,
+    body.in-session .end-session-btn{ padding:6px 12px; font-size:11px; }
+  }
 </style>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
@@ -4234,6 +4263,7 @@ resetStatsBtn.addEventListener('click', (e)=>{
 
 // ---------- Screen management ----------
 function showScreen(name){
+  document.body.classList.toggle('in-session', name === 'session');
   screenProfileSelect.classList.add('hidden');
   screenMenu.classList.add('hidden');
   screenSettings.classList.add('hidden');
